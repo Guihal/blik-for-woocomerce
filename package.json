@@ -1,0 +1,43 @@
+{
+    "name": "BlikForWoocomerce",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "mode": "dev",
+    "scripts": {
+        "build": "webpack build",
+        "watch": "webpack watch"
+    },
+    "repository": {},
+    "keywords": [],
+    "browserslist": [
+        "> 1%",
+        "last 3 version"
+    ],
+    "devDependencies": {
+        "@types/core-js": "^2.5.5",
+        "@types/node": "^17.0.18",
+        "@types/webpack": "^5.28.0",
+        "autoprefixer": "^10.4.19",
+        "clean-webpack-plugin": "^4.0.0",
+        "css-loader": "^6.11.0",
+        "css-mqpacker": "^7.0.0",
+        "cssnano": "^7.0.4",
+        "mini-css-extract-plugin": "^2.9.0",
+        "path": "^0.12.7",
+        "postcss": "^8.4.40",
+        "postcss-loader": "^8.1.1",
+        "sass": "^1.49.7",
+        "sass-loader": "^12.6.0",
+        "terser-webpack-plugin": "^5.3.10",
+        "webpack": "^5.93.0",
+        "webpack-cli": "^4.9.1",
+        "webpack-dev-server": "^4.4.0",
+        "webpack-nano": "^1.1.1",
+        "webpack-node-externals": "^3.0.0"
+    },
+    "dependencies": {
+        "postcss-preset-env": "^9.6.0",
+        "style-loader": "^4.0.0"
+    }
+}
