@@ -1,21 +1,17 @@
 export async function elementReady(selector, parent = false) {
-	return new Promise((resolve) => {
-		let block = document.querySelector(selector);
+    return new Promise((resolve) => {
+        const observer = new MutationObserver(callback)
 
-		if (block) {
-			resolve(block);
-			return;
-		}
+        observer.observe(parent ? parent : document.documentElement, { childList: true, subtree: true })
 
-		const observer = new MutationObserver((mutations, obs) => {
-			block = parent ? parent.querySelector(selector) : document.querySelector(selector);
+        callback()
+        function callback() {
+            const block = parent ? parent.querySelector(selector) : document.querySelector(selector)
 
-			if (block) {
-				resolve(block);
-				obs.disconnect();
-			}
-		});
+            if (!block) return
 
-		observer.observe(parent ? parent : document.documentElement, { childList: true, subtree: true });
-	});
+            resolve(block)
+            observer.disconnect()
+        }
+    })
 }

@@ -21,13 +21,15 @@ add_action('plugins_loaded', 'blik_woocomerce_gateway_class');
 function blik_woocomerce_gateway_class()
 {
     class WC_Gateway_blik_woocomerce extends WC_Payment_Gateway
-
-
     {
         public $timer_enabled;
         public $testmode;
         public $private_key;
         public $publishable_key;
+        public $text_in_popup;
+
+        public $payment_method;
+        public $stripe;
 
         public function __construct()
         {
@@ -36,6 +38,7 @@ function blik_woocomerce_gateway_class()
             $this->has_fields = true;
             $this->method_title = 'Blik for woocomerce';
             $this->method_description = 'Payment gateaway Blik for woocomerce';
+
 
 
             $this->init_form_fields();
@@ -49,21 +52,22 @@ function blik_woocomerce_gateway_class()
             $this->title = $this->get_option('title');
             $this->description = $this->get_option('description', 'Blik payment');
             $this->enabled = isset($this->settings['enabled']) ? $this->settings['enabled'] : 'yes';
-            $this->is_validate = isset($this->settings['is_validate']) === 'yes';
-            $this->timer_enabled =  'yes' === $this->get_option('timer_enabled');
             $this->testmode = 'yes' === $this->get_option('testmode');
             $this->timer_enabled = 'yes' === $this->get_option('timer_enabled');
             $this->testmode = 'yes' === $this->get_option('testmode');
             $this->private_key = $this->testmode ? $this->get_option('test_private_key') : $this->get_option('private_key');
             $this->publishable_key = $this->testmode ? $this->get_option('test_publishable_key') : $this->get_option('publishable_key');
-
-            // $this->title = 'Blik payment';
-            // $this->description = 'Blik payment';
+            $this->text_in_popup = $this->get_option('text_in_popup');
 
             add_action('woocommerce_update_options_payment_gateways_' . $this->id, [$this, 'process_admin_options']);
             add_action('wp_enqueue_scripts', array($this, 'scripts'));
 
+            add_action('woocommerce_api_get_client_secret_blik', array($this, 'get_client_secret_blik_webhook'));
+
             $this->includes();
+
+            $this->stripe = new \Stripe\StripeClient($this->private_key);
+            $this->create_payment_method();
         }
 
         public function init_form_fields()
@@ -89,27 +93,18 @@ function blik_woocomerce_gateway_class()
                     'description' => 'This text user can view on cart page',
                     'default'     => 'Blik payment',
                 ),
+                'text_in_popup' => array(
+                    'title'       => 'Text in popup',
+                    'type'        => 'textarea',
+                    'description' => 'This text user can view on popup after success blik code',
+                    'default'     => 'Confirm payment in the app within 60 seconds',
+                ),
                 'testmode' => array(
                     'title'       => 'Test mode',
                     'label'       => 'Enable test mode',
                     'type'        => 'checkbox',
                     'description' => '',
                     'desc_tip'    => true,
-                ),
-                'timer_enabled' => array(
-                    'title'       => 'On/off timer on cart page',
-                    'label'       => 'Enable timer',
-                    'type'        => 'checkbox',
-                    'description' => '',
-                    'default'     => 'yes',
-                    'desc_tip'    => true,
-                ),
-                'is_validate' => array(
-                    'title'       => 'On/off',
-                    'label'       => 'Allows you to send a code only if the required fields are filled in and the payment method is selected',
-                    'type'        => 'checkbox',
-                    'description' => '',
-                    'default'     => 'yes'
                 ),
                 'test_publishable_key' => array(
                     'title'       => 'Test published key',
@@ -153,16 +148,17 @@ function blik_woocomerce_gateway_class()
                 echo wpautop(wp_kses_post($this->description));
             }
 
-            echo '<fieldset id="wc-' . $this->id . '-cc-form" class="wc-credit-card-form wc-payment-form" style="background:transparent;">';
-
             do_action('woocommerce_blik_for_woocomerce_start', $this->id);
 ?>
-            <input type="number" min="000000" max="999999" name="blik_client_secret" placeholder="000000" pattern="/[0-9]{6}/" maxlength="6" minlength="6">
-<?php
 
-            do_action('woocommerce_blik_for_woocomerce_end', $this->id);
-
-            echo '<div class="clear"></div></fieldset>';
+            <fieldset id="wc-<?php echo $this->id ?>-cc-form" class="wc-credit-card-form wc-payment-form" style="background:transparent;">
+                <input type="hidden" name="blik_pass" value="no">
+                <input type="hidden" name="blik_error" value="">
+                <input type="number" min="000000" max="999999" name="blik_token" placeholder="000000" pattern="/[0-9]{6}/" maxlength="6" minlength="6">
+                <?php do_action('woocommerce_blik_for_woocomerce_end', $this->id); ?>
+                <div class="clear"></div>
+            </fieldset>
+<?php echo '';
         }
 
         // @ подключаемые скрипты
@@ -180,87 +176,130 @@ function blik_woocomerce_gateway_class()
                 return;
             }
 
-            if (!$this->testmode && !is_ssl()) {
-                return;
-            }
             wp_enqueue_style('blik-for-woocomerce', plugins_url('assets/style.css', __FILE__));
 
-            wp_enqueue_script('stripe-js-for-blik', 'https://js.stripe.com/v3/', true);
+            wp_enqueue_script('stripe-for-blik', 'https://js.stripe.com/v3/', true);
             wp_enqueue_script(
                 'blik-for-woocomerce',           // Имя скрипта
                 plugins_url('assets/bundle.js', __FILE__), // URL скрипта
                 [],                               // Массив зависимостей (пусто)
                 null,                             // Версия (null означает текущую версию WP)
-                true                              // Загружать в footer
             );
 
             wp_localize_script(
                 'blik-for-woocomerce',           // Имя скрипта
-                'blikData',             // Название объекта в JS
+                'blikObject',             // Название объекта в JS
                 array(
-                    'timerEnabled' => $this->timer_enabled,
-                    'orderId'      => $this->get_order_id(),
+                    'publicKey' => $this->publishable_key,
+                    'textInPopup' => $this->text_in_popup,
                 )
             );
         }
 
-        public function get_order_id()
-        {
-            global $woocommerce;
-            $order = $woocommerce->order;
-            if (! empty($order)) {
-                return $order->get_id();
-            }
-
-            return false;
-        }
-
-        public function validate_fields() {}
 
         public function process_payment($order_id)
         {
-            $order = wc_get_order($order_id);
+            $token = $_POST['blik_token'];
+            $pass = $_POST['blik_pass'];
+            $error = $_POST['blik_error'];
 
-            $token = $_POST['blik_client_secret'];
-
-            if (!isset($token) || strlen($token) !== 6) {
+            if (!isset($token) || strlen($token) !== 6 || !isset($pass) || !isset($error)) {
                 wc_add_notice('Incorrectly filled in the Blik code field', 'error');
                 return;
             }
 
-            $stripe = new \Stripe\StripeClient($this->private_key);
+            $order = wc_get_order($order_id);
 
-            $intent = $stripe->paymentIntents->create([
+            $confirmed = $this->create_intent($order, $token);
+
+
+            if ($confirmed->status === 'succeed') {
+                $this->confirm_payment($order);
+                return array(
+                    'result'   => 'success',
+                    'redirect' => $this->get_return_url($order)
+                );
+            }
+
+            wc_add_notice($confirmed->cancellation_reason, 'error');
+
+            return;
+
+            // if ($error !== '') {
+            //     wc_add_notice($error, 'success');
+            //     return;
+            // }
+
+            // if ($pass === 'no') {
+            //     $this->create_intent($order);
+            //     wc_add_notice('Confirm payment in stripe', 'success');
+            //     return;
+            // }
+
+            // if ($pass === 'yes') {
+            //     $this->confirm_payment($order);
+            //     return array(
+            //         'result'   => 'success',
+            //         'redirect' => $this->get_return_url($order)
+            //     );
+            // }
+
+            // wc_add_notice('Something went wrong.', 'error');
+        }
+
+        public function confirm_payment($order)
+        {
+            $order->payment_complete();
+            $order->add_order_note('Заказ оплачен, спасибочки!', true);
+            WC()->cart->empty_cart();
+        }
+
+        public function create_intent($order, $token)
+        {
+
+
+            $intent = $this->stripe->paymentIntents->create([
                 'amount' => $order->get_total() * 100,
                 'currency' => 'pln',
                 'payment_method_types' => ['blik'],
+                'payment_method' => $this->payment_method->id,
                 'capture_method' => 'automatic',
                 'description' => 'description',
-                'statement_descriptor' => 'ORDER_123',
+                'statement_descriptor' => 'ORDER_' . $order->get_id(),
             ]);
 
-            $confirmResult = $stripe->paymentIntents->confirm(
+            $confirmed = $intent->confirm(
                 $intent->id,
                 [
-                    'payment_method' => 'blik',
+                    'payment_method' => $this->payment_method->id,
                     'payment_method_options' => [
                         'blik' => [
-                            'code' => $token
-                        ]
+                            'code' => $token,
+                        ],
                     ]
                 ]
             );
 
-            if ($confirmResult->status === 'succeeded') {
-                $order->payment_complete();
-                $order->add_order_note('Заказ оплачен, спасибочки!', true);
-                WC()->cart->empty_cart();
-            } else {
-                wc_add_notice($confirmResult->last_payment_error->message, 'error');
-            }
+
+            return $confirmed;
+
+            // if (session_status() === PHP_SESSION_NONE) {
+            //     session_start();
+            // }
+
+            // $_SESSION["blik_client_secret"] = $intent->client_secret;
         }
 
+        public function create_payment_method()
+        {
+            $this->payment_method = $this->stripe->paymentMethods->create([
+                'type' => 'blik',
+                'blik' => [],
+                'billing_details' => ['name' => 'John Doe'],
+            ]);
 
+            // echo json_encode($this->payment_method);
+        }
 
         public function process_admin_options()
         {
@@ -269,14 +308,29 @@ function blik_woocomerce_gateway_class()
             return $saved;
         }
 
-
         public function admin_options()
         {
             parent::admin_options();
         }
 
-        private function create_intent() {}
+        public function get_client_secret_blik_webhook()
+        {
+            session_start();
+            $client_secret = $_SESSION["blik_client_secret"];
 
-        public function webhook_create_intent() {}
+            if (!isset($client_secret)) {
+                echo json_encode([
+                    'status' => 'error',
+                    'error' => 'client secret not found'
+                ]);
+                die();
+            }
+
+            echo json_encode([
+                'status' => 'ok',
+                'client_secret' => $client_secret,
+            ]);
+            die();
+        }
     }
 }
